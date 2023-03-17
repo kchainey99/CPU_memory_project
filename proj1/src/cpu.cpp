@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <string.h>
+#include <string>
 #include <sys/types.h>
 #include <time.h>
 #include <ctype.h>
@@ -9,8 +9,10 @@
 #include <sys/wait.h>
 #include "../include/cpu.h"
 
+using namespace std;
+
 //global variables
-int SP, PC, IR, AC, X, Y;
+int SP = 999, PC, IR, AC, X, Y;
 bool done, userMode;
 int interrupt_timer, timeout; //variables to track interrupt timeout
 int readpipe, writepipe; //to make reading & writing pipes easier to use/more readable
@@ -28,7 +30,7 @@ void decode_exec(); //decode & execute the instruction
 
 int readFromMem(int addr){
     if (userMode == true && addr >= timerintraddr){ //checking to see if we're accessing the wrong addr
-        perror("Error: Accessing system address in user mode!");
+        perror("Error: Accessing system address in user mode!\n");
         write(writepipe, "X", sizeof(char));
         exit(-1);
     }
@@ -42,7 +44,7 @@ int readFromMem(int addr){
 
 void writeToMem(int addr, int val){
     if (userMode == true && addr >= timerintraddr){ //checking to see if we're accessing the wrong addr
-        perror("Error: Accessing system addr in user mode!");
+        perror("Error: Accessing system addr in user mode!\n");
         write(writepipe, "X", sizeof(char));
         exit(-1);
     }
@@ -63,10 +65,7 @@ int pop(){
 }
 
 void initCPU(int timeoutval, int rp, int wp){
-    printf("Initializing CPU...\n");
     userMode = true; //set mode
-    IR = PC = AC = X = Y = 0; //initializing all vars to 0
-    SP = 999; //user stack starts at 999
 
     //setting pipes
     readpipe = rp;
@@ -80,28 +79,32 @@ void initCPU(int timeoutval, int rp, int wp){
 void runCPU(){
     done = false;
     while(!done){
-        printf("current instruction: %i \n", IR);
-        fetch(); //fetch instruction
-        decode_exec(); //decode + execute instruction
-        interrupt_timer++; //increment timer
-
         //timer interrupt
         if (interrupt_timer >= timeout){
+            printf("Timeout!\n");
             userMode = false; //swap to kernel mode
             interrupt_timer = 0; //reset interrupt timer
             int SP_temp = SP;
+            SP = sysStack;
             push(SP_temp); //push SP to stack
             push(PC);
             PC = 1000;
         }
+
+        IR = fetch(); //fetch instruction
+        decode_exec(); //decode + execute instruction
+
+        interrupt_timer++; //increment timer increases, regardless of mode
     }
 }
 
 int fetch(){
-    return readFromMem(PC++); //read from memory & update PC
+    int val = readFromMem(PC++); //read from memory & update PC
+    return val;
 }
 
 void decode_exec(){
+    int addr; //for fetching addresses
     switch(IR){ //switch = decode. execution happens when a case is met.
         case 1: // fetch value into AC
             AC = fetch();
@@ -114,6 +117,7 @@ void decode_exec(){
             break;
         case 4: //read value at addr + X into AC
             AC = readFromMem(fetch() + X);
+            break;
         case 5: //read value at addr + Y into AC
             AC = readFromMem(fetch() + Y);
             break;
@@ -126,23 +130,22 @@ void decode_exec(){
             writeToMem(tempaddr, AC);
             break;
         case 8: //load random int (1-100) into AC
-            AC = rand() + 1;
+            AC = rand() % 100 + 1;
             break;
         case 9: ;// write AC as an int or char to screen, depending on port.
             int port;
             port = fetch();
             if (port == 1)
-                printf(AC);
-            else if (port == 2){
-                char temp = AC + '0';
-                printf(temp);
-            }
+                printf("%d \n", AC);
+            else if (port == 2)
+                printf("%c \n", AC);
             break;
         case 10: //add X to AC
             AC += X;
             break;
         case 11: //add Y to AC
             AC += Y;
+            break;
         case 12: //subtract X from AC
             AC -= X;
             break;
@@ -157,6 +160,7 @@ void decode_exec(){
             break;
         case 16: //copy AC to Y
             Y = AC;
+            break;
         case 17: //copy Y to AC
             AC = Y;
             break;
@@ -169,19 +173,17 @@ void decode_exec(){
         case 20: //jump to address
             PC = fetch();
             break;
-        case 21: ;//jump to addr if AC = 0
-            int addr;
+        case 21: //jump to addr if AC = 0
             addr = fetch(); //need to fetch regardless of AC value
             if (AC == 0)
                 PC = addr;
             break;
-        case 22: ;//jump to addr if AC != 0
+        case 22: //jump to addr if AC != 0
             addr = fetch();
             if (AC != 0)
                 PC = addr;
             break;
-        case 23: ;//push PC to stack and jump to the address
-            addr;
+        case 23: //push PC to stack and jump to the address
             addr = fetch();
             push(PC);
             PC = addr;
@@ -209,8 +211,8 @@ void decode_exec(){
                 push(SP_temp); //push program SP to stack
                 push(PC); //push PC to stack
                 PC = interruptaddr;
-                break;
             }
+            break;
         case 30: //interrupt return
             PC = readFromMem(SP++);
             SP = readFromMem(SP);
@@ -218,11 +220,11 @@ void decode_exec(){
             break;
         case 50: //end program
             done = true;
-            write(writepipe, 'X', sizeof(char));
+            write(writepipe, "X", sizeof(char));
             break;
         default: //error case
             printf("Error: invalid instruction: %i", IR);
-            write(writepipe, 'X', sizeof(char));
+            write(writepipe, "X", sizeof(char));
             exit(-1);
     }
 }
